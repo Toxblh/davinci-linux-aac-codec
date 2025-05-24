@@ -9,12 +9,6 @@ extern "C" {
 #include <libavutil/error.h>
 }
 
-static std::string ffmpeg_err2str(int errnum) {
-    char buf[AV_ERROR_MAX_STRING_SIZE] = {0};
-    av_strerror(errnum, buf, sizeof(buf));
-    return std::string(buf);
-}
-
 // NOTE: When creating a plugin for release, please generate a new Codec UUID in order to prevent conflicts with other third-party plugins.
 const uint8_t AudioEncoder::s_UUID[] = { 0x6a, 0x88, 0xe8, 0x41, 0xd8, 0xe4, 0x41, 0x4b, 0x87, 0x9e, 0xa4, 0x80, 0xfc, 0x90, 0xda, 0xb5 };
 
@@ -278,10 +272,8 @@ StatusCode AudioEncoder::DoProcess(HostBufferRef* p_pBuff)
         inputBitDepth = m_outputBitDepth_;
     }
     if (inputBitDepth != 16 && inputBitDepth != 24) {
-        g_Log(logLevelWarn, "AAC Audio Plugin :: inputBitDepth property missing or invalid, fallback to outputBitDepth=%u", m_outputBitDepth_);
         inputBitDepth = m_outputBitDepth_;
     }
-    g_Log(logLevelWarn, "AAC Audio Plugin :: DoProcess: requested outputBitDepth=%u, real inputBitDepth=%u", m_outputBitDepth_, inputBitDepth);
     int numChannels = m_channels;
     int frame_size = m_frameSize;
     if (p_pBuff != NULL)
@@ -290,23 +282,10 @@ StatusCode AudioEncoder::DoProcess(HostBufferRef* p_pBuff)
         size_t bufSize = 0;
         if (!p_pBuff->LockBuffer(&pBuf, &bufSize) || bufSize == 0)
         {
-            g_Log(logLevelWarn, "AAC Audio Plugin :: Skipping empty or invalid input buffer");
             return errNone;
-        }
-        // --- HEX DUMP первых 32 байт для диагностики ---
-        if (bufSize > 0 && pBuf) {
-            std::string hex;
-            for (size_t i = 0; i < std::min(bufSize, (size_t)32); ++i) {
-                char byteStr[4];
-                snprintf(byteStr, sizeof(byteStr), "%02X ", (unsigned char)pBuf[i]);
-                hex += byteStr;
-            }
-            g_Log(logLevelWarn, "AAC Audio Plugin :: First 32 bytes of PCM buffer: %s", hex.c_str());
         }
         int bytesPerSample = (inputBitDepth == 16) ? 2 : 3;
         int totalSamples = bufSize / (numChannels * bytesPerSample);
-        g_Log(logLevelWarn, "AAC Audio Plugin :: PCM buffer: bufSize=%zu, inputBitDepth=%u, numChannels=%d, frame_size=%d, totalSamples=%d", bufSize, inputBitDepth, numChannels, frame_size, totalSamples);
-        // --- КОНВЕРТАЦИЯ В FLOAT PLANAR ---
         std::vector<std::vector<float>> planarPCM(numChannels, std::vector<float>(totalSamples, 0.0f));
         if (inputBitDepth == 16) {
             int16_t* src = (int16_t*)pBuf;
@@ -319,98 +298,70 @@ StatusCode AudioEncoder::DoProcess(HostBufferRef* p_pBuff)
             unsigned char* src = (unsigned char*)pBuf;
             for (int i = 0; i < totalSamples; ++i) {
                 for (int ch = 0; ch < numChannels; ++ch) {
-                    unsigned char* samplePtr = src + (i * numChannels + ch) * 3;
-                    int32_t val = samplePtr[0] | (samplePtr[1] << 8) | (samplePtr[2] << 16);
-                    if (val & 0x800000) val |= ~0xFFFFFF;
-                    planarPCM[ch][i] = val / 8388608.0f;
+                    int idx = (i * numChannels + ch) * 3;
+                    int32_t sample = (src[idx + 2] << 24) | (src[idx + 1] << 16) | (src[idx] << 8);
+                    sample >>= 8;
+                    planarPCM[ch][i] = sample / 8388608.0f;
                 }
             }
         }
-        // --- LOG: первые 10 float-сэмплов каждого канала ---
-        for (int ch = 0; ch < numChannels; ++ch) {
-            std::string log = "CH" + std::to_string(ch) + ": ";
-            for (int i = 0; i < std::min(10, totalSamples); ++i) {
-                char buf[32];
-                snprintf(buf, sizeof(buf), "%+.5f ", planarPCM[ch][i]);
-                log += buf;
-            }
-            g_Log(logLevelWarn, "AAC Audio Plugin :: FLOAT PCM[%d]: %s", ch, log.c_str());
-        }
-        // --- ДОБАВЛЯЕМ В RINGBUFFER И ОТПРАВЛЯЕМ ФРЕЙМЫ ---
         int sampleIdx = 0;
         while (sampleIdx < totalSamples) {
             int chunk = std::min((int)(frame_size - m_ringBufferFill), totalSamples - sampleIdx);
-            // Подготовить указатели для AddPCMToRingBuffer
             std::vector<const float*> chunkPtrs(numChannels);
             for (int ch = 0; ch < numChannels; ++ch) {
                 chunkPtrs[ch] = &planarPCM[ch][sampleIdx];
             }
-            // Временный массив указателей для передачи в AddPCMToRingBuffer
-            std::vector<const float*> planarPtrs(numChannels);
-            for (int ch = 0; ch < numChannels; ++ch) planarPtrs[ch] = chunkPtrs[ch];
-            // Добавить chunk сэмплов в ringbuffer
-            for (int i = 0; i < chunk; ++i) {
-                for (int ch = 0; ch < numChannels; ++ch) {
-                    if (m_ringBufferFill < m_frameSize)
-                        m_pcmRingBuffer[ch][m_ringBufferFill] = planarPCM[ch][sampleIdx + i];
+            AddPCMToRingBuffer(chunkPtrs.data(), chunk);
+            if (IsRingBufferFull()) {
+                AVFrame* tempFrame = av_frame_alloc();
+                tempFrame->format = m_ffmpegCtx->codecCtx->sample_fmt;
+                tempFrame->nb_samples = frame_size;
+                av_channel_layout_copy(&tempFrame->ch_layout, &m_ffmpegCtx->codecCtx->ch_layout);
+                av_frame_get_buffer(tempFrame, 0);
+                float** dst = (float**)tempFrame->extended_data;
+                GetFrameFromRingBuffer(dst, frame_size);
+                tempFrame->pts = m_ffmpegCtx->pts;
+                m_ffmpegCtx->pts += frame_size;
+                int ret = avcodec_send_frame(m_ffmpegCtx->codecCtx, tempFrame);
+                av_frame_free(&tempFrame);
+                if (ret < 0) {
+                    return errFail;
                 }
-                m_ringBufferFill++;
-                if (IsRingBufferFull()) {
-                    // --- ОТПРАВИТЬ ФРЕЙМ ---
-                    AVFrame* tempFrame = av_frame_alloc();
-                    tempFrame->format = m_ffmpegCtx->codecCtx->sample_fmt;
-                    tempFrame->nb_samples = frame_size;
-                    av_channel_layout_copy(&tempFrame->ch_layout, &m_ffmpegCtx->codecCtx->ch_layout);
-                    av_frame_get_buffer(tempFrame, 0);
-                    float** dst = (float**)tempFrame->extended_data;
-                    GetFrameFromRingBuffer(dst, frame_size);
-                    tempFrame->pts = m_ffmpegCtx->pts;
-                    m_ffmpegCtx->pts += frame_size;
-                    int ret = avcodec_send_frame(m_ffmpegCtx->codecCtx, tempFrame);
-                    av_frame_free(&tempFrame);
-                    if (ret < 0) {
-                        g_Log(logLevelError, "Error sending frame to encoder: ret=%d (%s)", ret, ffmpeg_err2str(ret).c_str());
-                        p_pBuff->UnlockBuffer();
-                        return errFail;
+                do {
+                    ret = avcodec_receive_packet(m_ffmpegCtx->codecCtx, m_ffmpegCtx->pkt);
+                    if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+                        break;
+                    else if (ret < 0) {
+                        break;
                     }
-                    // --- ПОЛУЧИТЬ ПАКЕТЫ ---
-                    do {
-                        ret = avcodec_receive_packet(m_ffmpegCtx->codecCtx, m_ffmpegCtx->pkt);
-                        if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
-                            break;
-                        else if (ret < 0) {
-                            g_Log(logLevelError, "Error encoding audio frame: ret=%d (%s)", ret, ffmpeg_err2str(ret).c_str());
-                            break;
-                        }
-                        HostBufferRef outBuf;
-                        outBuf.Resize(m_ffmpegCtx->pkt->size);
-                        char* outData = nullptr;
-                        size_t outSize = 0;
-                        if (outBuf.LockBuffer(&outData, &outSize) && outSize >= (size_t)m_ffmpegCtx->pkt->size) {
-                            memcpy(outData, m_ffmpegCtx->pkt->data, m_ffmpegCtx->pkt->size);
-                            outBuf.UnlockBuffer();
-                            outBuf.SetProperty(pIOPropBitDepth, propTypeUInt32, &m_outputBitDepth_, 1);
-                            outBuf.SetProperty(pIOPropSamplingRate, propTypeUInt32, &m_ffmpegCtx->codecCtx->sample_rate, 1);
-                            uint32_t numChannels_ = m_ffmpegCtx->codecCtx->ch_layout.nb_channels;
-                            outBuf.SetProperty(pIOPropNumChannels, propTypeUInt32, &numChannels_, 1);
-                            uint8_t isKey = (m_ffmpegCtx->pts == frame_size) ? 1 : 0;
-                            outBuf.SetProperty(pIOPropIsKeyFrame, propTypeUInt8, &isKey, 1);
-                            int64_t pkt_pts = m_ffmpegCtx->pkt->pts;
-                            outBuf.SetProperty(pIOPropPTS, propTypeInt64, &pkt_pts, 1);
-                            int64_t pkt_dur = m_ffmpegCtx->pkt->duration;
-                            outBuf.SetProperty(pIOPropDuration, propTypeInt64, &pkt_dur, 1);
-                            IPluginCodecRef::DoProcess(&outBuf);
-                        }
-                        av_packet_unref(m_ffmpegCtx->pkt);
-                    } while (ret >= 0);
-                    ResetRingBuffer();
-                }
+                    HostBufferRef outBuf;
+                    outBuf.Resize(m_ffmpegCtx->pkt->size);
+                    char* outData = nullptr;
+                    size_t outSize = 0;
+                    if (outBuf.LockBuffer(&outData, &outSize) && outSize >= (size_t)m_ffmpegCtx->pkt->size) {
+                        memcpy(outData, m_ffmpegCtx->pkt->data, m_ffmpegCtx->pkt->size);
+                        outBuf.UnlockBuffer();
+                        outBuf.SetProperty(pIOPropBitDepth, propTypeUInt32, &m_outputBitDepth_, 1);
+                        outBuf.SetProperty(pIOPropSamplingRate, propTypeUInt32, &m_ffmpegCtx->codecCtx->sample_rate, 1);
+                        uint32_t numChannels_ = m_ffmpegCtx->codecCtx->ch_layout.nb_channels;
+                        outBuf.SetProperty(pIOPropNumChannels, propTypeUInt32, &numChannels_, 1);
+                        uint8_t isKey = 0;
+                        outBuf.SetProperty(pIOPropIsKeyFrame, propTypeUInt8, &isKey, 1);
+                        int64_t pkt_pts = m_ffmpegCtx->pkt->pts;
+                        outBuf.SetProperty(pIOPropPTS, propTypeInt64, &pkt_pts, 1);
+                        int64_t pkt_dur = m_ffmpegCtx->pkt->duration;
+                        outBuf.SetProperty(pIOPropDuration, propTypeInt64, &pkt_dur, 1);
+                        IPluginCodecRef::DoProcess(&outBuf);
+                    }
+                    av_packet_unref(m_ffmpegCtx->pkt);
+                } while (ret >= 0);
+                ResetRingBuffer();
             }
             sampleIdx += chunk;
         }
         p_pBuff->UnlockBuffer();
     } else {
-        // --- ФИНАЛ: ДОПОЛНИТЬ ОСТАТОК RINGBUFFER НУЛЯМИ, ОТПРАВИТЬ ПОСЛЕДНИЙ ФРЕЙМ, FLUSH ---
         if (m_ringBufferFill > 0) {
             PadAndFlushRingBuffer();
             AVFrame* tempFrame = av_frame_alloc();
@@ -425,7 +376,6 @@ StatusCode AudioEncoder::DoProcess(HostBufferRef* p_pBuff)
             int ret = avcodec_send_frame(m_ffmpegCtx->codecCtx, tempFrame);
             av_frame_free(&tempFrame);
             if (ret < 0) {
-                g_Log(logLevelError, "Error sending last frame to encoder: ret=%d (%s)", ret, ffmpeg_err2str(ret).c_str());
                 return errFail;
             }
             do {
@@ -433,7 +383,6 @@ StatusCode AudioEncoder::DoProcess(HostBufferRef* p_pBuff)
                 if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
                     break;
                 else if (ret < 0) {
-                    g_Log(logLevelError, "Error encoding audio frame (last): ret=%d (%s)", ret, ffmpeg_err2str(ret).c_str());
                     break;
                 }
                 HostBufferRef outBuf;
@@ -462,7 +411,6 @@ StatusCode AudioEncoder::DoProcess(HostBufferRef* p_pBuff)
         // --- FLUSH ---
         int ret = avcodec_send_frame(m_ffmpegCtx->codecCtx, nullptr);
         if (ret < 0 && ret != AVERROR_EOF) {
-            g_Log(logLevelError, "Error sending flush to encoder: ret=%d (%s)", ret, ffmpeg_err2str(ret).c_str());
             return errFail;
         }
         do {
@@ -470,7 +418,6 @@ StatusCode AudioEncoder::DoProcess(HostBufferRef* p_pBuff)
             if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
                 break;
             else if (ret < 0) {
-                g_Log(logLevelError, "Error encoding audio frame (flush): ret=%d (%s)", ret, ffmpeg_err2str(ret).c_str());
                 break;
             }
             HostBufferRef outBuf;
@@ -521,7 +468,6 @@ void AudioEncoder::GetFrameFromRingBuffer(float** out, size_t samples) {
 
 void AudioEncoder::PadAndFlushRingBuffer() {
     if (m_ringBufferFill == 0) return;
-    // Дополнить нулями до m_frameSize
     for (size_t ch = 0; ch < m_channels; ++ch) {
         for (size_t i = m_ringBufferFill; i < m_frameSize; ++i) {
             m_pcmRingBuffer[ch][i] = 0.0f;
