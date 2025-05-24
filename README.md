@@ -14,6 +14,11 @@ It builds a plugin compatible with the IOPlugins system of DaVinci Resolve Studi
 - DaVinci Resolve Studio (FREE does NOT support plugins!)
 - FFmpeg
 
+## Install
+- Download aac_encoder_plugin-linux-bundle.tar.gz from [Releases](https://github.com/Toxblh/davinci-linux-aac-codec/releases)
+- Unpack
+- Exec `./install.sh` (or check Readme inside)
+
 ------------
 
 ## Build Requirements
