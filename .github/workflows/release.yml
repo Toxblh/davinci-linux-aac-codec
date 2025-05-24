@@ -1,0 +1,35 @@
+name: Release AAC Encoder Plugin
+
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libavcodec-dev libavutil-dev libc++-dev libc++abi-dev
+      - name: Build plugin
+        run: |
+          make clean && make
+          ./build.sh
+      - name: Prepare release artifact
+        run: |
+          mkdir -p release_bundle
+          cp -r aac_encoder_plugin.dvcp.bundle release_bundle/
+          cp install.sh release_bundle/
+          cp README_RELEASE.md release_bundle/README.txt
+      - name: Archive release bundle
+        run: |
+          cd release_bundle
+          tar czf ../aac_encoder_plugin-linux-bundle.tar.gz *
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: aac_encoder_plugin-linux-bundle.tar.gz
+          generate_release_notes: true

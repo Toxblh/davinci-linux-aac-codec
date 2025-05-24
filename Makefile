@@ -33,7 +33,7 @@ $(OBJDIR)/%.o: %.cpp
 
 $(TARGET):
 	$(CC) $(OBJDIR)/*.o $(LDFLAGS) -o $(TARGET)
-	install -Dm755 $(TARGET) /opt/resolve/IOPlugins/aac_encoder_plugin.dvcp.bundle/Contents/Linux-x86-64/aac_encoder_plugin.dvcp
+#	install -Dm755 $(TARGET) /opt/resolve/IOPlugins/aac_encoder_plugin.dvcp.bundle/Contents/Linux-x86-64/aac_encoder_plugin.dvcp
 
 clean: clean-subdirs
 	rm -rf $(OBJDIR)
