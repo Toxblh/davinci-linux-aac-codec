@@ -3,7 +3,9 @@
 This project is a DaVinci Resolve audio encoder plugin for AAC using FFmpeg. 
 It builds a plugin compatible with the IOPlugins system of DaVinci Resolve Studio (Free doesn't support plugins) for Linux.
 
-![](./image.png)
+<p align="center">  
+  <img style="width:400px;" src="./image.png" />
+</p>
 
 ## Features
 - AAC encoding using FFmpeg
