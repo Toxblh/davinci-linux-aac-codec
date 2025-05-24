@@ -1,22 +1,17 @@
 include .mk.defs
 
 BASEDIR = ./
-# X264_DIR = $(BASEDIR)../x264
 
 BUILD_DIR = .
 SUBDIRS = wrapper
 
-# CFLAGS += -I$(X264_DIR)/include
-
 ifeq ($(OS_TYPE), Linux)
-LDFLAGS = -shared '-Wl,-rpath,$$ORIGIN' -Wl,-z,origin -lpthread -stdlib=libc++
+LDFLAGS = -shared '-Wl,-rpath,$$ORIGIN' -Wl,-z,origin -lpthread -stdlib=libc++ -lavcodec -lavutil
 else
 LDFLAGS = -dynamiclib
 endif
 
 TARGET = $(BINDIR)/aac_encoder_plugin.dvcp
-
-# LDFLAGS += -L$(X264_DIR)/lib -lx264 -lz
 
 OBJDIR = $(BUILD_DIR)/build
 BINDIR = $(BUILD_DIR)/bin
@@ -38,6 +33,7 @@ $(OBJDIR)/%.o: %.cpp
 
 $(TARGET):
 	$(CC) $(OBJDIR)/*.o $(LDFLAGS) -o $(TARGET)
+	install -Dm755 $(TARGET) /opt/resolve/IOPlugins/aac_encoder_plugin.dvcp.bundle/Contents/Linux-x86-64/aac_encoder_plugin.dvcp
 
 clean: clean-subdirs
 	rm -rf $(OBJDIR)
