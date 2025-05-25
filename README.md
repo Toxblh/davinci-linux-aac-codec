@@ -7,6 +7,16 @@ It builds a plugin compatible with the IOPlugins system of DaVinci Resolve Studi
   <img style="width:400px;" src="./image.png" />
 </p>
 
+<p align="center">
+  <a href="https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=WUAAG2HH58WE4" title="Donate via Paypal"><img height="36px" src="https://github.com/Toxblh/MTMR/raw/master/Resources/support_paypal.svg" alt="PayPal donate button" /></a>
+  <a href="https://www.buymeacoffee.com/toxblh" target="_blank"><img src="https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png" alt="Buy Me A Coffee" height="36px" ></a>
+  <a href="https://www.patreon.com/bePatron?u=9900748"><img height="36px"  src="https://c5.patreon.com/external/logo/become_a_patron_button.png" srcset="https://c5.patreon.com/external/logo/become_a_patron_button@2x.png 2x"></a>
+</p>
+<p align="center">
+  <a href="https://www.donationalerts.com/r/toxblh" target="_blank"><img src="https://github.com/user-attachments/assets/84b50c9c-f135-4f88-97b4-3a9efe53e48f" alt="Donation Alrets" height="36px" ></a>
+  <a href="https://boosty.to/toxblh" target="_blank"><img src="https://github.com/user-attachments/assets/4a6113a6-fd33-4f69-a104-5a61bd230e3e" alt="Boosty" height="36px" ></a>
+</p>
+
 ## Features
 - AAC encoding using FFmpeg
 
