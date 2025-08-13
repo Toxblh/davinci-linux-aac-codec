@@ -5,7 +5,7 @@ CC = clang++
 CPP = $(CC) -E
 AR = ar
 
-CFLAGS = -fPIC -stdlib=libc++ -std=c++11 -Wall -I$(PLUGIN_DEF_DIR)
+CFLAGS = -fPIC  -std=c++11 -Wall -I$(PLUGIN_DEF_DIR)
 
 ifndef DBG
 CFLAGS += -O2

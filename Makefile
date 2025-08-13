@@ -6,7 +6,7 @@ BUILD_DIR = .
 SUBDIRS = wrapper
 
 ifeq ($(OS_TYPE), Linux)
-LDFLAGS = -shared '-Wl,-rpath,$$ORIGIN' -Wl,-z,origin -lpthread -stdlib=libc++ -lavcodec -lavutil
+LDFLAGS = -shared '-Wl,-rpath,$$ORIGIN' -Wl,-z,origin -lpthread  -lavcodec -lavutil
 else
 LDFLAGS = -dynamiclib
 endif
@@ -19,16 +19,22 @@ BINDIR = $(BUILD_DIR)/bin
 .PHONY: all
 
 HEADERS = plugin.h audio_encoder.h
-SRCS = plugin.cpp audio_encoder.cpp
+SRCS = plugin.cpp audio_encoder.cpp wrapper/host_api.cpp
 OBJS = $(SRCS:%.cpp=$(OBJDIR)/%.o)
+
+CFLAGS += -I$(BASEDIR)/wrapper -I/usr/include/c++/14 -stdlib=libstdc++ -I/usr/include/c++/x86_64-redhat-linux/14
 
 all: prereq make-subdirs $(HEADERS) $(SRCS) $(OBJS) $(TARGET)
 
 prereq:
 	mkdir -p $(OBJDIR)
 	mkdir -p $(BINDIR)
+	mkdir -p $(OBJDIR)/wrapper  # Ensure wrapper directory exists
 
 $(OBJDIR)/%.o: %.cpp
+	$(CC) -c -o $@ $< $(CFLAGS)
+
+$(OBJDIR)/wrapper/%.o: wrapper/%.cpp
 	$(CC) -c -o $@ $< $(CFLAGS)
 
 $(TARGET):
@@ -50,3 +56,4 @@ clean-subdirs:
 	echo "Making clean in $$subdir"; \
 	(cd $$subdir; make clean; cd ..) \
 	done
+
